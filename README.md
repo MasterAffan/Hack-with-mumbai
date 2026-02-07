@@ -19,14 +19,7 @@ Krafity is a modern creative platform combining an interactive canvas and video 
 
 - frontend/ — SPA codebase (empty scaffold for now)
 - backend/ — API and workers (empty scaffold for now)
-- docs/ — architecture and design notes
-
-## Getting Started (Day 1)
-
-- Install frontend dependencies in `frontend/` once the package manifest is finalized
-- Create and activate a Python virtual environment for `backend/`
-- Configure environment variables via `.env` files (to be defined)
-- Run the development servers independently; integration comes next
+- docs/ — architecture and design note
 
 
 ## Conventions
@@ -35,6 +28,4 @@ Krafity is a modern creative platform combining an interactive canvas and video 
 - Pydantic settings and clear module boundaries for the backend
 - Explicit API contracts and versioned endpoints
 
-## License
-
-To be determined. For internal development during Day 1.
+]
