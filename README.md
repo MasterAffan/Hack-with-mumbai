@@ -28,4 +28,3 @@ Krafity is a modern creative platform combining an interactive canvas and video 
 - Pydantic settings and clear module boundaries for the backend
 - Explicit API contracts and versioned endpoints
 
-]
