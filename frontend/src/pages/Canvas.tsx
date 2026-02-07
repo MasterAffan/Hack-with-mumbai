@@ -30,6 +30,11 @@ function Toolbar() {
     const blob: Blob = await new Promise((resolve) => tmpCanvas.toBlob((b) => resolve(b as Blob), "image/png") as any);
     const fd = new FormData();
     fd.append("files", blob, "start.png");
+    const last = Array.from(document.querySelectorAll("[data-last-frame]")).pop() as HTMLImageElement | undefined;
+    if (last) {
+      const resBlob = await fetch(last.src).then((r) => r.blob());
+      fd.append("ending_image", resBlob, "end.png");
+    }
     fd.append("global_context", "Simple scene");
     fd.append("custom_prompt", "Generate a short video transitioning from this frame");
     const res = await fetch(`${backend}/api/jobs/video`, { method: "POST", body: fd });

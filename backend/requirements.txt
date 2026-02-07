@@ -7,3 +7,4 @@ pydantic-settings
 google-cloud-storage
 google-cloud-core
 httpx
+redis

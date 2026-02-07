@@ -90,6 +90,7 @@ export const VideoGenerationManager = () => {
                             const imageX = (frameW - scaledW) / 2; const imageY = (frameH - scaledH) / 2;
                             const imageShapeId = createShapeId();
                             editor.createShapes([{ id: imageShapeId, type: "image", parentId: targetFrameId, x: imageX, y: imageY, isLocked: true, props: { assetId, w: scaledW, h: scaledH } }]);
+                            const imgEl = new Image(); imgEl.src = dataUrl; imgEl.setAttribute("data-last-frame", "1");
                           };
                           reader.readAsDataURL(blob);
                         }
