@@ -1,0 +1,41 @@
+{
+  "name": "krafity-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier ."
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "*",
+    "@radix-ui/react-tabs": "*",
+    "@radix-ui/themes": "*",
+    "@tailwindcss/vite": "*",
+    "framer-motion": "*",
+    "idb-keyval": "*",
+    "lucide-react": "*",
+    "react": "*",
+    "react-dom": "*",
+    "react-easy-crop": "*",
+    "react-router-dom": "*",
+    "rollup": "*",
+    "sonner": "*",
+    "tailwindcss": "*",
+    "tldraw": "*",
+    "tslint": "*",
+    "vite": "*"
+  },
+  "devDependencies": {
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "@vitejs/plugin-react-swc": "*",
+    "eslint": "*",
+    "eslint-config-prettier": "*",
+    "prettier": "*",
+    "typescript": "*",
+    "typescript-eslint": "*"
+  }
+}

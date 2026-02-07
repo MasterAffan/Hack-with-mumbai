@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-multipart
+google-genai
+python-dotenv
+pydantic-settings
+google-cloud-storage
+google-cloud-core
+httpx
