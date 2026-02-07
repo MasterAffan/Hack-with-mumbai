@@ -3,8 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from utils.env import settings
 from services.vertex_service import VertexService
+from services.storage_service import StorageService
+from services.job_service import JobService
+from models.job import VideoJobRequest
 
 vertex_service = VertexService()
+storage_service = StorageService()
+job_service = JobService(vertex_service=vertex_service, storage_service=storage_service)
 
 app = FastAPI(title="Krafity API", description="Day 1 backend skeleton", version="0.1.0")
 
@@ -25,12 +30,33 @@ def health():
     return {"status": "healthy"}
 
 @app.post("/api/jobs/video")
-async def create_video_job(request: Request):
-    return JSONResponse(status_code=202, content={"job_id": "mock-vid-job", "status": "accepted"})
+async def create_video_job(
+    files: UploadFile = File(...),
+    ending_image: UploadFile | None = File(None),
+    global_context: str = "",
+    custom_prompt: str = "",
+):
+    starting_image_data = await files.read()
+    ending_image_data = await ending_image.read() if ending_image else None
+    data = VideoJobRequest(
+        starting_image=starting_image_data,
+        ending_image=ending_image_data,
+        global_context=global_context,
+        custom_prompt=custom_prompt,
+    )
+    job_id = await job_service.create_video_job(data)
+    return {"job_id": job_id}
 
 @app.get("/api/jobs/video/{job_id}")
 async def get_video_job(job_id: str):
-    return {"job_id": job_id, "status": "waiting", "video_url": None}
+    status = await job_service.get_video_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if status.status == "waiting":
+        return JSONResponse(status_code=202, content={"status": "waiting"})
+    if status.status == "error":
+        return JSONResponse(status_code=500, content={"status": "error"})
+    return {"status": "done", "video_url": status.video_url}
 
 @app.post("/api/gemini/extract-context")
 async def extract_context(video: UploadFile | None = File(None), image: UploadFile | None = File(None)):

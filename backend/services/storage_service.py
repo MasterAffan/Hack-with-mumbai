@@ -33,3 +33,13 @@ class StorageService:
         except Exception:
             bucket_name = self.bucket.name
             return f"https://storage.googleapis.com/{bucket_name}/{item_name}"
+
+    def gcs_uri_to_public_url(self, uri: str) -> str:
+        # gs://bucket/path -> https://storage.googleapis.com/bucket/path
+        if not uri.startswith("gs://"):
+            return uri
+        without_scheme = uri[5:]
+        parts = without_scheme.split("/", 1)
+        bucket = parts[0]
+        path = parts[1] if len(parts) > 1 else ""
+        return f"https://storage.googleapis.com/{bucket}/{path}"

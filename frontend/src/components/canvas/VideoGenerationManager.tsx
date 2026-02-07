@@ -35,6 +35,7 @@ export const VideoGenerationManager = () => {
               if (intervalId) { window.clearInterval(intervalId); intervalsRef.current.delete(jobId); }
               const doneMeta = { ...currentArrow.meta, status: "done", videoUrl: data.video_url };
               editor.updateShapes([{ id: currentArrow.id, type: "arrow", meta: doneMeta }]);
+              window.dispatchEvent(new CustomEvent("krafity:video-done", { detail: { url: data.video_url } }));
               (async () => {
                 try {
                   const blob = await fetch(data.video_url).then((r) => r.blob());
