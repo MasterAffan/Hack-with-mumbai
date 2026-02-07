@@ -11,9 +11,9 @@ function Toolbar() {
     const frameA = createShapeId(); const frameB = createShapeId(); const arrowId = createShapeId();
     editor.createShapes([
       { id: frameA, type: "frame", x: 100, y: 100, props: { w: 480, h: 270, name: "Start" } },
-      { id: frameB, type: "frame", x: 700, y: 100, props: { w: 480, h: 270, name: "Target", isLocked: true } },
+      { id: frameB, type: "frame", x: 700, y: 100, props: { w: 480, h: 270, name: "Target" } },
     ]);
-    editor.createShapes([{ id: arrowId, type: "arrow", x: 580, y: 235, props: { bend: 0, start: { type: "binding" }, end: { type: "binding" } } }]);
+    editor.createShapes([{ id: arrowId, type: "arrow", x: 580, y: 235, props: { bend: 0 } } as any]);
     const bindings = editor.getBindingsInvolvingShape(arrowId);
     const startBinding = bindings.find((b: any) => b.props.terminal === "start");
     const endBinding = bindings.find((b: any) => b.props.terminal === "end");

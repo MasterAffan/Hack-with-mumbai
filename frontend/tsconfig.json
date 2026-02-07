@@ -13,4 +13,6 @@
     "strict": true
   },
   "include": ["src", "vite.config.ts"]
+  ,
+  "files": ["vite-env.d.ts"]
 }

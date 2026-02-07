@@ -58,7 +58,7 @@ export const VideoGenerationManager = () => {
               if (endBinding) {
                 const targetFrameId = (endBinding as any).toId;
                 const targetFrame = editor.getShape(targetFrameId);
-                if (targetFrame && (targetFrame.type === "frame" || targetFrame.type === "aspect-frame")) {
+                if (targetFrame && targetFrame.type === "frame") {
                   const frameW = (targetFrame.props as any).w || 960;
                   const frameH = (targetFrame.props as any).h || 540;
                   editor.updateShapes([{ id: targetFrameId, type: targetFrame.type, isLocked: false, props: { ...targetFrame.props, name: "Generated Frame" } }]);
