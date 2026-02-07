@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc && vite build",
     "lint": "eslint . --ext .ts,.tsx",
-    "format": "prettier ."
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier .",
+    "format:fix": "prettier --write ."
   },
   "dependencies": {
     "@radix-ui/react-dialog": "*",
