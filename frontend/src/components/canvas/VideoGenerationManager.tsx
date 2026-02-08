@@ -15,6 +15,8 @@ export const VideoGenerationManager = () => {
     useGlobalContext("global-context");
   const intervalsRef = useRef<Map<string, number>>(new Map());
   const completedJobsRef = useRef<Set<string>>(new Set());
+  const jobStartTimesRef = useRef<Map<string, number>>(new Map());
+  const contextCacheRef = useRef<Map<string, any>>(new Map());
 
   useEffect(() => {
     // Monitor for new arrows with pending jobs and start polling for them
@@ -37,10 +39,12 @@ export const VideoGenerationManager = () => {
           continue;
         }
 
-        // Start a new interval for this specific job
+        // Start adaptive polling for this specific job
         const backend_url = import.meta.env.VITE_BACKEND_URL || "";
+        jobStartTimesRef.current.set(jobId, Date.now());
 
-        const pollInterval = window.setInterval(async () => {
+        const pollJob = async () => {
+          if (completedJobsRef.current.has(jobId)) return;
           try {
             const response = await apiFetch(
               `${backend_url}/api/jobs/video/${jobId}`,
@@ -144,11 +148,12 @@ export const VideoGenerationManager = () => {
             if (data.status === "done" && data.video_url) {
               // Prevent any new intervals for this job
               completedJobsRef.current.add(jobId);
+              jobStartTimesRef.current.delete(jobId);
 
               // Stop polling this job immediately
               const intervalId = intervalsRef.current.get(jobId);
               if (intervalId) {
-                window.clearInterval(intervalId);
+                window.clearTimeout(intervalId);
                 intervalsRef.current.delete(jobId);
               }
 
@@ -167,9 +172,55 @@ export const VideoGenerationManager = () => {
                 },
               ]);
 
-              // Extract context from video (runs async after interval cleared)
-              (async () => {
+              // Find the target frame (arrow's end binding)
+              const bindings = editor.getBindingsInvolvingShape(
+                currentArrow.id,
+              );
+              const endBinding = bindings.find(
+                (b: any) =>
+                  b.fromId === currentArrow.id && b.props.terminal === "end",
+              );
+
+              const targetFrameId = endBinding ? (endBinding as any).toId : null;
+              const targetFrame = targetFrameId ? editor.getShape(targetFrameId) : null;
+              const frameW = targetFrame ? ((targetFrame.props as any).w || 960) : 960;
+              const frameH = targetFrame ? ((targetFrame.props as any).h || 540) : 540;
+
+              if (targetFrame && targetFrame.type === "aspect-frame") {
+                editor.updateShapes([
+                  {
+                    id: targetFrameId,
+                    type: "aspect-frame",
+                    isLocked: false,
+                    props: {
+                      ...targetFrame.props,
+                      name: "Generated Frame",
+                    },
+                  },
+                ]);
+              }
+
+              // Run context extraction and last-frame extraction in PARALLEL
+              const contextPromise = (async () => {
                 try {
+                  // Check cache first
+                  const cached = contextCacheRef.current.get(data.video_url);
+                  if (cached) {
+                    console.log("[Optimization] Context cache hit for", data.video_url.slice(-20));
+                    updateSceneState(cached);
+                    const latestArrow = editor.getShape(currentArrow.id);
+                    const latestMeta = (latestArrow?.meta as any) ?? doneMeta;
+                    addClip({
+                      index: context?.clips.length ?? 0,
+                      clipUrl: data.video_url,
+                      lastFrameUrl: String(latestMeta.lastFrameUrl ?? ""),
+                      annotations: cached,
+                      prompt: String(latestMeta.prompt ?? ""),
+                      modelParams: latestMeta.modelParams ?? {},
+                    });
+                    return;
+                  }
+
                   const blob = await fetch(data.video_url).then((r) =>
                     r.blob(),
                   );
@@ -191,6 +242,7 @@ export const VideoGenerationManager = () => {
                     const latestMeta = (latestArrow?.meta as any) ?? doneMeta;
                     try {
                       const extracted = JSON.parse(responseText);
+                      contextCacheRef.current.set(data.video_url, extracted);
                       updateSceneState(extracted);
 
                       addClip({
@@ -210,152 +262,127 @@ export const VideoGenerationManager = () => {
                 }
               })();
 
-              // Find the target frame (arrow's end binding)
-              const bindings = editor.getBindingsInvolvingShape(
-                currentArrow.id,
-              );
-              const endBinding = bindings.find(
-                (b: any) =>
-                  b.fromId === currentArrow.id && b.props.terminal === "end",
-              );
+              // Extract last frame from video (runs in parallel with context)
+              const framePromise = new Promise<void>((resolve) => {
+                if (!targetFrameId) { resolve(); return; }
+                const videoUrl = data.video_url;
+                const video = document.createElement("video");
+                video.crossOrigin = "anonymous";
+                video.src = videoUrl;
 
-              if (endBinding) {
-                const targetFrameId = (endBinding as any).toId;
-                const targetFrame = editor.getShape(targetFrameId);
+                video.onloadedmetadata = () => {
+                  video.currentTime = Math.max(0, video.duration - 0.1);
+                };
 
-                if (targetFrame && targetFrame.type === "aspect-frame") {
-                  const frameW = (targetFrame.props as any).w || 960;
-                  const frameH = (targetFrame.props as any).h || 540;
+                video.onseeked = () => {
+                  const canvas = document.createElement("canvas");
+                  canvas.width = video.videoWidth;
+                  canvas.height = video.videoHeight;
+                  const ctx = canvas.getContext("2d");
+                  if (ctx) {
+                    ctx.drawImage(video, 0, 0);
 
-                  // Update frame name and unlock it
-                  editor.updateShapes([
-                    {
-                      id: targetFrameId,
-                      type: "aspect-frame",
-                      isLocked: false, // Unlock the frame when generation completes
-                      props: {
-                        ...targetFrame.props,
-                        name: "Generated Frame",
-                      },
-                    },
-                  ]);
-
-                  // Extract last frame from video and add it as an image
-                  const videoUrl = data.video_url;
-                  const video = document.createElement("video");
-                  video.crossOrigin = "anonymous";
-                  video.src = videoUrl;
-
-                  video.onloadedmetadata = () => {
-                    video.currentTime = Math.max(0, video.duration - 0.1);
-                  };
-
-                  video.onseeked = () => {
-                    const canvas = document.createElement("canvas");
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    const ctx = canvas.getContext("2d");
-                    if (ctx) {
-                      ctx.drawImage(video, 0, 0);
-
-                      canvas.toBlob((blob) => {
-                        if (blob) {
-                          const reader = new FileReader();
-                          reader.onload = (e) => {
-                            const dataUrl = e.target?.result as string;
-                            const refreshedArrow = editor.getShape(
-                              currentArrow.id,
-                            );
-                            const refreshedMeta =
-                              (refreshedArrow?.meta as any) ?? doneMeta;
-                            editor.updateShapes([
-                              {
-                                id: currentArrow.id,
-                                type: "arrow",
-                                meta: {
-                                  ...refreshedMeta,
-                                  lastFrameUrl: dataUrl,
-                                },
+                    canvas.toBlob((blob) => {
+                      if (blob) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                          const dataUrl = e.target?.result as string;
+                          const refreshedArrow = editor.getShape(
+                            currentArrow.id,
+                          );
+                          const refreshedMeta =
+                            (refreshedArrow?.meta as any) ?? doneMeta;
+                          editor.updateShapes([
+                            {
+                              id: currentArrow.id,
+                              type: "arrow",
+                              meta: {
+                                ...refreshedMeta,
+                                lastFrameUrl: dataUrl,
                               },
-                            ]);
+                            },
+                          ]);
 
-                            const assetId = AssetRecordType.createId();
-                            const asset: TLImageAsset = {
-                              id: assetId,
-                              type: "image",
-                              typeName: "asset",
-                              props: {
-                                name: "last-frame.png",
-                                src: dataUrl,
-                                w: video.videoWidth,
-                                h: video.videoHeight,
-                                mimeType: "image/png",
-                                isAnimated: false,
-                              },
-                              meta: {},
-                            };
-
-                            editor.createAssets([asset]);
-
-                            // Delete placeholder image if it exists
-                            const targetFrameChildren =
-                              editor.getSortedChildIdsForParent(targetFrameId);
-                            const placeholderImage = targetFrameChildren
-                              .map((id) => editor.getShape(id))
-                              .find(
-                                (shape) =>
-                                  shape?.type === "image" &&
-                                  shape?.meta?.isPlaceholder === true,
-                              );
-                            if (placeholderImage) {
-                              editor.deleteShapes([placeholderImage.id]);
-                            }
-
-                            const scale = Math.min(
-                              frameW / video.videoWidth,
-                              frameH / video.videoHeight,
-                            );
-                            const scaledW = video.videoWidth * scale;
-                            const scaledH = video.videoHeight * scale;
-
-                            // Use relative coordinates (relative to parent frame)
-                            const imageX = (frameW - scaledW) / 2;
-                            const imageY = (frameH - scaledH) / 2;
-
-                            const imageShapeId = createShapeId();
-                            editor.createShapes([
-                              {
-                                id: imageShapeId,
-                                type: "image",
-                                parentId: targetFrameId,
-                                x: imageX,
-                                y: imageY,
-                                isLocked: true,
-                                props: {
-                                  assetId,
-                                  w: scaledW,
-                                  h: scaledH,
-                                },
-                              },
-                            ]);
+                          const assetId = AssetRecordType.createId();
+                          const asset: TLImageAsset = {
+                            id: assetId,
+                            type: "image",
+                            typeName: "asset",
+                            props: {
+                              name: "last-frame.png",
+                              src: dataUrl,
+                              w: video.videoWidth,
+                              h: video.videoHeight,
+                              mimeType: "image/png",
+                              isAnimated: false,
+                            },
+                            meta: {},
                           };
-                          reader.readAsDataURL(blob);
-                        }
-                      }, "image/png");
-                    }
-                  };
 
-                  video.onerror = () => {
-                    console.error("Failed to load video for frame extraction");
-                  };
-                }
-              }
+                          editor.createAssets([asset]);
+
+                          const targetFrameChildren =
+                            editor.getSortedChildIdsForParent(targetFrameId);
+                          const placeholderImage = targetFrameChildren
+                            .map((id) => editor.getShape(id))
+                            .find(
+                              (shape) =>
+                                shape?.type === "image" &&
+                                shape?.meta?.isPlaceholder === true,
+                            );
+                          if (placeholderImage) {
+                            editor.deleteShapes([placeholderImage.id]);
+                          }
+
+                          const scale = Math.min(
+                            frameW / video.videoWidth,
+                            frameH / video.videoHeight,
+                          );
+                          const scaledW = video.videoWidth * scale;
+                          const scaledH = video.videoHeight * scale;
+
+                          const imageX = (frameW - scaledW) / 2;
+                          const imageY = (frameH - scaledH) / 2;
+
+                          const imageShapeId = createShapeId();
+                          editor.createShapes([
+                            {
+                              id: imageShapeId,
+                              type: "image",
+                              parentId: targetFrameId,
+                              x: imageX,
+                              y: imageY,
+                              isLocked: true,
+                              props: {
+                                assetId,
+                                w: scaledW,
+                                h: scaledH,
+                              },
+                            },
+                          ]);
+                          resolve();
+                        };
+                        reader.readAsDataURL(blob);
+                      } else { resolve(); }
+                    }, "image/png");
+                  } else { resolve(); }
+                };
+
+                video.onerror = () => {
+                  console.error("Failed to load video for frame extraction");
+                  resolve();
+                };
+              });
+
+              // Wait for both to finish
+              await Promise.all([contextPromise, framePromise]);
             } else if (data.status === "error") {
               // Stop polling and update to error status
               completedJobsRef.current.add(jobId);
+              jobStartTimesRef.current.delete(jobId);
               const intervalId = intervalsRef.current.get(jobId);
               if (intervalId) {
-                clearInterval(intervalId);
+                clearTimeout(intervalId);
                 intervalsRef.current.delete(jobId);
               }
 
@@ -393,10 +420,21 @@ export const VideoGenerationManager = () => {
           } catch (e) {
             console.error("Error polling job", jobId, e);
           }
-        }, 2000); // Poll this specific job every 2s
 
-        // Store this interval
-        intervalsRef.current.set(jobId, pollInterval);
+          // Schedule next poll with adaptive interval
+          if (!completedJobsRef.current.has(jobId)) {
+            const jobStart = jobStartTimesRef.current.get(jobId) ?? Date.now();
+            const elapsed = (Date.now() - jobStart) / 1000;
+            // 5s for first 30s (Veo never finishes this fast), then 2s
+            const nextInterval = elapsed < 30 ? 5000 : 2000;
+            const timeoutId = window.setTimeout(pollJob, nextInterval);
+            intervalsRef.current.set(jobId, timeoutId);
+          }
+        };
+
+        // Start first poll after 5s (adaptive: slow at start)
+        const initialTimeout = window.setTimeout(pollJob, 5000);
+        intervalsRef.current.set(jobId, initialTimeout);
       }
     }, 2000); // Check for new arrows every 2s
 
@@ -405,12 +443,13 @@ export const VideoGenerationManager = () => {
       if (checkInterval) {
         window.clearInterval(checkInterval);
       }
-      // Clear all job-specific intervals
-      intervalsRef.current.forEach((intervalId) => {
-        window.clearInterval(intervalId);
+      // Clear all job-specific timeouts
+      intervalsRef.current.forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
       });
       intervalsRef.current.clear();
       completedJobsRef.current.clear();
+      jobStartTimesRef.current.clear();
     };
   }, [editor]);
 

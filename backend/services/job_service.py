@@ -7,6 +7,7 @@ from utils.env import settings
 import uuid
 import asyncio
 import traceback
+import hashlib
 
 class JobService:
     """
@@ -20,6 +21,51 @@ class JobService:
         self._jobs: Dict[str, dict] = {}
         self._pending_jobs: Dict[str, dict] = {}
         self._error_jobs: Dict[str, dict] = {}
+        # Caches for optimization
+        self._annotation_cache: Dict[str, str] = {}      # image_hash -> annotation description
+        self._cleaned_image_cache: Dict[str, bytes] = {}  # image_hash -> cleaned image bytes
+
+    def _hash_image(self, image_data: bytes) -> str:
+        return hashlib.sha256(image_data).hexdigest()
+
+    async def _get_annotations(self, image_data: bytes) -> str:
+        img_hash = self._hash_image(image_data)
+        if img_hash in self._annotation_cache:
+            print(f"[CACHE HIT] Annotations for {img_hash[:12]}")
+            return self._annotation_cache[img_hash]
+        desc = await self.vertex_service.analyze_image_content(
+            prompt="Describe any animation annotations you see. Use this description to inform a video director. Be descriptive about location and purpose of the annotations.",
+            image_data=image_data
+        )
+        self._annotation_cache[img_hash] = desc
+        print(f"[CACHE MISS] Annotations for {img_hash[:12]} — cached")
+        return desc
+
+    async def _get_cleaned_image(self, image_data: bytes, prompt: str) -> bytes:
+        img_hash = self._hash_image(image_data)
+        if img_hash in self._cleaned_image_cache:
+            print(f"[CACHE HIT] Cleaned image for {img_hash[:12]}")
+            return self._cleaned_image_cache[img_hash]
+        cleaned = await self.vertex_service._generate_image_raw(
+            prompt=prompt,
+            image=image_data
+        )
+        self._cleaned_image_cache[img_hash] = cleaned
+        print(f"[CACHE MISS] Cleaned image for {img_hash[:12]} — cached")
+        return cleaned
+
+    def _has_annotations(self, description: str) -> bool:
+        """Check if annotation description indicates actual annotations exist"""
+        if not description:
+            return False
+        lower = description.lower()
+        no_annotation_phrases = [
+            "no annotation", "no text", "no caption", "no subtitle",
+            "does not contain", "doesn't contain", "no visible",
+            "clean image", "no overlays", "without any text",
+            "there are no", "i don't see any", "no writing",
+        ]
+        return not any(phrase in lower for phrase in no_annotation_phrases)
 
     async def create_video_job(self, request: VideoJobRequest) -> str:
         """Create a video job and return job_id immediately, processing happens in background"""
@@ -42,35 +88,33 @@ class JobService:
         try:
             print(f"[DEBUG] Starting video job processing for {job_id}")
             
-            # for parallel tasks
-            tasks = [
-                self.vertex_service.analyze_image_content(
-                    prompt="Describe any animation annotations you see. Use this description to inform a video director. Be descriptive about location and purpose of the annotations.",
-                    image_data=request.starting_image
-                ),
-                self.vertex_service._generate_image_raw(
-                    prompt="Remove all text, captions, subtitles, annotations from this image. Generate a clean version of the image with no text. Keep everything else the exact same.",
-                    image=request.starting_image
-                )
-            ]
-            
-            if request.ending_image:
-                tasks.append(
-                    self.vertex_service._generate_image_raw(
-                        prompt="Remove all text, captions, subtitles, annotations from this image. Generate a clean version of the image with no text. Keep the art/image style the exact same.",
-                        image=request.ending_image
-                    )
-                )
-            
-            print(f"[DEBUG] Running {len(tasks)} parallel tasks...")
-            results = await asyncio.gather(*tasks)
-            print(f"[DEBUG] Parallel tasks completed")
-            
-            annotation_description = results[0]
-            starting_frame = results[1]
-            ending_frame = results[2] if len(results) > 2 else None
-            
+            # Step 1: Get annotations (with cache)
+            annotation_description = await self._get_annotations(request.starting_image)
             print(f"[DEBUG] Annotation description: {annotation_description[:100] if annotation_description else 'None'}...")
+            
+            # Step 2: Only clean image if annotations were found
+            if self._has_annotations(annotation_description):
+                print(f"[DEBUG] Annotations detected — cleaning starting image")
+                starting_frame = await self._get_cleaned_image(
+                    request.starting_image,
+                    "Remove all text, captions, subtitles, annotations from this image. Generate a clean version of the image with no text. Keep everything else the exact same."
+                )
+            else:
+                print(f"[DEBUG] No annotations detected — skipping image cleaning (saved 1 API call)")
+                starting_frame = request.starting_image
+            
+            # Step 3: Clean ending image if provided (only if it has annotations)
+            ending_frame = None
+            if request.ending_image:
+                ending_annotations = await self._get_annotations(request.ending_image)
+                if self._has_annotations(ending_annotations):
+                    ending_frame = await self._get_cleaned_image(
+                        request.ending_image,
+                        "Remove all text, captions, subtitles, annotations from this image. Generate a clean version of the image with no text. Keep the art/image style the exact same."
+                    )
+                else:
+                    ending_frame = request.ending_image
+            
             print(f"[DEBUG] Starting frame bytes: {len(starting_frame) if starting_frame else 0}")
 
             operation = await self.vertex_service.generate_video_content(

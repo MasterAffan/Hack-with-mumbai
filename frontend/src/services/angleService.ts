@@ -12,6 +12,16 @@ const HF_TOKENS: string[] = (import.meta.env.VITE_HF_TOKENS || "")
 let _currentTokenIndex = 0;
 const _gradioClients = new Map<string, any>();
 
+console.log(`[AngleService] Loaded ${HF_TOKENS.length} HF tokens`);
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null) {
+    try { return JSON.stringify(err); } catch { return String(err); }
+  }
+  return String(err);
+}
+
 const AZIMUTH_STEPS = [0, 45, 90, 135, 180, 225, 270, 315];
 const ELEVATION_STEPS = [-30, 0, 30, 60];
 const DISTANCE_STEPS = [0.6, 1.0, 1.4];
@@ -59,6 +69,16 @@ export function getDistanceLabel(val: number): string {
   return "Wide";
 }
 
+function isQuotaExhausted(err: unknown): boolean {
+  const msg = formatError(err).toLowerCase();
+  return (msg.includes("quota") && msg.includes("exceeded")) || msg.includes("quota exceeded");
+}
+
+function isRuntimeOOM(err: unknown): boolean {
+  const msg = formatError(err).toLowerCase();
+  return msg.includes("runtimeerror") || msg.includes("runtime error") || msg.includes("worker error");
+}
+
 async function getGradioClient(tokenIndex: number): Promise<any> {
   const token = HF_TOKENS[tokenIndex];
   if (!token) throw new Error("No HF tokens configured");
@@ -72,15 +92,6 @@ function rotateToken(): void {
   _currentTokenIndex = (_currentTokenIndex + 1) % HF_TOKENS.length;
 }
 
-function isQuotaError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)) || "";
-  return (
-    msg.includes("GPU quota") ||
-    msg.includes("exceeded") ||
-    msg.includes("quota")
-  );
-}
-
 async function gradioPredict(
   endpoint: string,
   payload: Record<string, unknown>
@@ -92,28 +103,42 @@ async function gradioPredict(
   }
 
   let lastError: unknown = null;
-  for (let attempts = 0; attempts < HF_TOKENS.length; attempts++) {
-    const idx = _currentTokenIndex % HF_TOKENS.length;
+  const totalTokens = HF_TOKENS.length;
+
+  // Try every token one by one until one succeeds
+  for (let attempt = 0; attempt < totalTokens; attempt++) {
+    const idx = _currentTokenIndex % totalTokens;
+    const tokenPreview = HF_TOKENS[idx].slice(0, 8) + "...";
+    console.log(`[AngleService] Attempt ${attempt + 1}/${totalTokens} — token #${idx + 1} (${tokenPreview})`);
+
     try {
       const client = await getGradioClient(idx);
       const result = await client.predict(endpoint, payload);
+      console.log(`[AngleService] ✓ Success with token #${idx + 1}`);
       return result;
     } catch (err) {
       lastError = err;
-      if (isQuotaError(err)) {
-        console.warn(`HF Token #${idx + 1} quota exceeded, rotating...`);
-        _gradioClients.delete(HF_TOKENS[idx]);
+      const errStr = formatError(err);
+      console.warn(`[AngleService] ✗ Token #${idx + 1} failed:`, errStr);
+
+      // Clear cached client
+      _gradioClients.delete(HF_TOKENS[idx]);
+
+      if (isQuotaExhausted(err)) {
+        // Token's daily quota is done — skip to next token immediately
+        console.warn(`[AngleService] Token #${idx + 1} quota exhausted, skipping`);
         rotateToken();
-      } else {
-        throw err;
+        continue;
       }
+
+      // For RuntimeError / OOM — don't burn other tokens on the same error
+      // Just rotate and let the caller retry with smaller dimensions
+      rotateToken();
     }
   }
-  throw (
-    lastError ||
-    new Error(
-      "All HF tokens have exceeded their GPU quota. Please try again later."
-    )
+
+  throw new Error(
+    `All ${totalTokens} HF tokens failed. Last error: ${formatError(lastError)}`
   );
 }
 
@@ -121,6 +146,36 @@ export interface AngleParams {
   azimuth: number;
   elevation: number;
   distance: number;
+}
+
+function getImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to read image dimensions"));
+    };
+    img.src = url;
+  });
+}
+
+function clampDimensions(w: number, h: number, maxDim: number): { width: number; height: number } {
+  let width = w;
+  let height = h;
+  if (width > maxDim || height > maxDim) {
+    const scale = maxDim / Math.max(width, height);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  // Ensure even dimensions
+  width = width % 2 === 0 ? width : width - 1;
+  height = height % 2 === 0 ? height : height - 1;
+  return { width, height };
 }
 
 export async function generateAngleChange(
@@ -131,25 +186,47 @@ export async function generateAngleChange(
   const elevation = snapElevation(params.elevation);
   const distance = snapDistance(params.distance);
 
-  const result = await gradioPredict("/infer_camera_edit", {
-    image: imageBlob,
-    azimuth,
-    elevation,
-    distance,
-    seed: 0,
-    randomize_seed: true,
-    guidance_scale: 1.0,
-    num_inference_steps: 4,
-    height: 1024,
-    width: 1024,
-  });
+  const dims = await getImageDimensions(imageBlob);
 
-  const outputUrl = result?.data?.[0]?.url;
-  if (!outputUrl) {
-    throw new Error("No image returned from angle generation API");
+  // Try progressively smaller sizes if ZeroGPU runs out of memory
+  const MAX_DIMS = [1024, 768, 512];
+
+  let lastError: unknown = null;
+  for (const maxDim of MAX_DIMS) {
+    const { width, height } = clampDimensions(dims.width, dims.height, maxDim);
+    console.log(`[AngleService] Input: ${dims.width}x${dims.height} → trying ${width}x${height} (max ${maxDim})`);
+
+    try {
+      const result = await gradioPredict("/infer_camera_edit", {
+        image: imageBlob,
+        azimuth,
+        elevation,
+        distance,
+        seed: 0,
+        randomize_seed: true,
+        guidance_scale: 1.0,
+        num_inference_steps: 4,
+        height,
+        width,
+      });
+
+      const outputUrl = result?.data?.[0]?.url;
+      if (!outputUrl) {
+        throw new Error("No image returned from angle generation API");
+      }
+      return outputUrl;
+    } catch (err) {
+      lastError = err;
+      if (isRuntimeOOM(err)) {
+        console.warn(`[AngleService] OOM at ${width}x${height}, retrying smaller...`);
+        continue;
+      }
+      // Non-OOM error (e.g. all tokens exhausted) — don't retry smaller
+      throw err;
+    }
   }
 
-  return outputUrl;
+  throw lastError instanceof Error ? lastError : new Error(formatError(lastError));
 }
 
 export { AZIMUTH_STEPS, ELEVATION_STEPS, DISTANCE_STEPS };
