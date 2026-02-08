@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+.env
+.git
+.venv
+venv
+frontend
+node_modules
+*.md
+*.json
+!backend/requirements.txt

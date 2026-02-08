@@ -1,0 +1,138 @@
+Complete Google Cloud Setup Guide for Krafity.ai
+Based on our previous work together, here's a comprehensive step-by-step guide for setting up your new Google Cloud account for Krafity.ai:
+
+🔧 Step 1: Create a New Google Cloud Project
+Go to Google Cloud Console
+Click on the project dropdown (top-left, next to "Google Cloud")
+Click "New Project"
+Enter a project name (e.g., krafity-new)
+Click "Create"
+Wait for the project to be created, then select it from the dropdown
+🔌 Step 2: Enable Required APIs
+Go to APIs & Services > Enable APIs and Services and enable these:
+
+API Name	Purpose
+Vertex AI API	For AI video generation (Veo)
+Cloud Storage API	For storing videos/images
+Cloud Storage JSON API	For programmatic access
+IAM Service Account Credentials API	For authentication
+Quick way via Search:
+
+Click "+ Enable APIs and Services"
+Search for each API and click "Enable"
+🪣 Step 3: Create a Cloud Storage Bucket
+Go to Cloud Storage > Buckets
+Click "Create"
+Configure:
+Name: flowboard-videos-{unique-id} (must be globally unique)
+Location type: Region → Choose us-central1 (recommended for Vertex AI)
+Storage class: Standard
+Access control: Fine-grained (important!)
+Public access prevention: Uncheck "Enforce public access prevention"
+Click "Create"
+🌐 Step 4: Make the Bucket Public (For Video Playback)
+This is critical for videos to play in the browser!
+
+Option A: Via Cloud Console UI
+Go to your bucket
+Click "Permissions" tab
+Click "+ Grant Access"
+Add:
+Principal: allUsers
+Role: Storage Object Viewer
+Click "Save"
+Confirm the warning about public access
+Option B: Via Cloud Shell (if UI doesn't work)
+bash
+gsutil iam ch allUsers:objectViewer gs://YOUR_BUCKET_NAME
+🔒 Step 5: Configure CORS (Critical for Browser Playback!)
+This was a major issue we faced before. Videos won't play without CORS!
+
+Create a CORS config file:
+Open Cloud Shell (click the terminal icon in top-right of console)
+Create the CORS file:
+bash
+cat > cors.json << 'EOF'
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Content-Range", "Accept-Ranges", "Content-Length"],
+    "maxAgeSeconds": 3600
+  }
+]
+EOF
+Apply CORS to your bucket:
+bash
+gsutil cors set cors.json gs://YOUR_BUCKET_NAME
+Verify CORS is applied:
+bash
+gsutil cors get gs://YOUR_BUCKET_NAME
+👤 Step 6: Create a Service Account
+Go to IAM & Admin > Service Accounts
+Click "+ Create Service Account"
+Configure:
+Name: flowboard-service
+ID: flowboard-service (auto-generated)
+Click "Create and Continue"
+Grant Roles:
+Add these roles one by one:
+
+Vertex AI User
+Storage Admin
+Storage Object Admin
+Service Account Token Creator
+Click "Continue" → "Done"
+🔑 Step 7: Download the JSON Key File
+Find your service account in the list
+Click on it to open details
+Go to "Keys" tab
+Click "Add Key" > "Create new key"
+Select JSON format
+Click "Create"
+The JSON file will download automatically
+⚠️ Important: If you get an error about iam.disableServiceAccountKeyCreation, your organization has a policy blocking key creation. You'll need to contact your admin or use a personal Gmail account instead.
+
+📁 Step 8: Configure Your Project
+Rename the JSON file to something like flowboard-credentials.json
+Move it to your project root: c:\Users\Affan\Desktop\newtest\flowboard\
+Update your .env file:
+env
+# Google Cloud Configuration
+GOOGLE_APPLICATION_CREDENTIALS=./flowboard-credentials.json
+GCP_PROJECT_ID=your-new-project-id
+GCS_BUCKET_NAME=your-new-bucket-na
+GCP_LOCATION=us-central1
+✅ Step 9: Verify Everything Works
+Test Cloud Storage Access:
+bash
+# In Cloud Shell
+gsutil ls gs://YOUR_BUCKET_NAME
+Test uploading a file:
+bash
+echo "test" > test.txt
+gsutil cp test.txt gs://YOUR_BUCKET_NAME/
+gsutil ls gs://YOUR_BUCKET_NAME/
+Test public access:
+Open this URL in your browser (replace with your bucket and file):
+
+https://storage.googleapis.com/YOUR_BUCKET_NAME/test.txt
+🚨 Common Issues We Faced & Solutions
+Issue	Solution
+CORS errors in browser	Apply the CORS config using gsutil cors set
+Videos not playing (blank)	Make bucket public with allUsers:objectViewer
+"Access Denied" in Cloud Shell	Re-authenticate with gcloud auth login
+Service account key creation blocked	Use a personal Google account, or ask org admin to disable the policy
+Vertex AI quota exceeded	Wait 24 hours or request quota increase
+"Public access prevention" blocking	Uncheck it in bucket settings before making public
+📋 Quick Checklist
+ Created new Google Cloud project
+ Enabled Vertex AI API
+ Enabled Cloud Storage API
+ Created storage bucket in us-central1
+ Made bucket public (allUsers:objectViewer)
+ Applied CORS configuration
+ Created service account with correct roles
+ Downloaded JSON key file
+ Updated .env with new credentials
+ Tested public URL access

@@ -26,7 +26,8 @@ class JobStatus:
     metadata: Optional[dict] = None
 
 class VideoJob(TypedDict):
+    """Type hint for video job stored in Redis"""
     job_id: str
     operation_name: str
-    job_start_time: str
+    job_start_time: str  # ISO format datetime string
     metadata: dict

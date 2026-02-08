@@ -1,73 +1,115 @@
-import { Tldraw, useEditor, createShapeId } from "tldraw";
-import { useEffect, useState } from "react";
+import {
+  Tldraw,
+  Editor,
+  DefaultQuickActions,
+  DefaultQuickActionsContent,
+} from "tldraw";
+import "tldraw/tldraw.css";
+import { useState, useEffect } from "react";
+import { useCanvas } from "../hooks/useCanvas";
+import { CanvasToolbar } from "../components/canvas/CanvasToolbar";
+import { FrameShapeUtil } from "../components/canvas/VideoCanvasComponent";
 import { VideoGenerationManager } from "../components/canvas/VideoGenerationManager";
-import { GeneratingDialog } from "../components/ui/GeneratingDialog";
+import { ArrowActionMenu } from "../components/canvas/ArrowActionMenu";
+import { CanvasNavigationMenu } from "../components/canvas/CanvasNavigationMenu";
+import { FrameGraphProvider } from "../contexts/FrameGraphContext";
+import { FrameGraphInitializer } from "../components/canvas/FrameGraphInitializer";
+//import { GitHubStars } from "../components/GitHubStars";
+import { MonitorX } from "lucide-react";
 
-function Toolbar() {
-  const editor = useEditor();
-  const [showDialog, setShowDialog] = useState(false);
-  useEffect(() => { editor.setCurrentTool("select"); }, [editor]);
-  async function startGeneration() {
-    const frameA = createShapeId(); const frameB = createShapeId(); const arrowId = createShapeId();
-    editor.createShapes([
-      { id: frameA, type: "frame", x: 100, y: 100, props: { w: 480, h: 270, name: "Start" } },
-      { id: frameB, type: "frame", x: 700, y: 100, props: { w: 480, h: 270, name: "Target" } },
-    ]);
-    editor.createShapes([{ id: arrowId, type: "arrow", x: 580, y: 235, props: { bend: 0 } } as any]);
-    const bindings = editor.getBindingsInvolvingShape(arrowId);
-    const startBinding = bindings.find((b: any) => b.props.terminal === "start");
-    const endBinding = bindings.find((b: any) => b.props.terminal === "end");
-    editor.updateShapes([{ id: arrowId, type: "arrow", meta: { status: "pending", startTime: Date.now() } }]);
-    const backend = import.meta.env.VITE_API_BASE_URL || "";
-    // Build a simple starting image blob from an HTML canvas
-    const tmpCanvas = document.createElement("canvas");
-    tmpCanvas.width = 960; tmpCanvas.height = 540;
-    const ctx = tmpCanvas.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = "#efeef5"; ctx.fillRect(0, 0, 960, 540);
-      ctx.fillStyle = "#111827"; ctx.font = "bold 28px system-ui"; ctx.fillText("Krafity Start Frame", 40, 60);
-    }
-    const blob: Blob = await new Promise((resolve) => tmpCanvas.toBlob((b) => resolve(b as Blob), "image/png") as any);
-    const fd = new FormData();
-    fd.append("files", blob, "start.png");
-    const last = Array.from(document.querySelectorAll("[data-last-frame]")).pop() as HTMLImageElement | undefined;
-    if (last) {
-      const resBlob = await fetch(last.src).then((r) => r.blob());
-      fd.append("ending_image", resBlob, "end.png");
-    }
-    fd.append("global_context", "Simple scene");
-    fd.append("custom_prompt", "Generate a short video transitioning from this frame");
-    const res = await fetch(`${backend}/api/jobs/video`, { method: "POST", body: fd });
-    const data = await res.json();
-    editor.updateShapes([{ id: arrowId, type: "arrow", meta: { status: "pending", jobId: data.job_id, startTime: Date.now() } }]);
-    setShowDialog(true);
-  }
+const GitHubButton = () => {
   return (
-    <div className="absolute top-4 left-4 z-50">
-      <button className="px-3 py-2 rounded bg-black text-white" onClick={startGeneration}>Start Mock Generation</button>
-      {showDialog && <GeneratingDialog />}
-    </div>
+    <button
+      onClick={() =>
+        window.open("https://github.com/MasterAffan/Hack-with-mumbai", "_blank")
+      }
+      className="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+      style={{ width: "100%" }}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+      </svg>
+      {
+        //<GitHubStars repo="austinjiann/flowboard" />
+      }
+    </button>
   );
-}
+};
 
-export default function CanvasPage() {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+const customShapeUtils = [FrameShapeUtil];
+
+export default function Canvas() {
+  const { handleMount, handleClear, editorRef } = useCanvas();
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [hideUi, setHideUi] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
   useEffect(() => {
-    const handler = (e: any) => setPreviewUrl(e.detail?.url || null);
-    window.addEventListener("krafity:video-done", handler);
-    return () => window.removeEventListener("krafity:video-done", handler);
+    const checkMobile = () => {
+      const isSmallScreen = window.innerWidth < 768;
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      setIsMobile(isSmallScreen && isTouchDevice);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
   }, []);
-  return (
-    <div className="h-screen">
-      <Toolbar />
-      <Tldraw />
-      <VideoGenerationManager />
-      {previewUrl && (
-        <div className="fixed bottom-4 left-4 bg-white/90 p-3 rounded shadow max-w-md">
-          <div className="text-sm font-medium mb-2">Preview</div>
-          <video controls src={previewUrl} className="w-full rounded" />
+
+  const handleEditorMount = (editorInstance: Editor) => {
+    setEditor(editorInstance);
+    handleMount(editorInstance);
+  };
+
+  if (isMobile) {
+    return (
+      <div className="fixed inset-0 bg-white/80 backdrop-blur-md flex items-center justify-center p-6 z-50">
+        <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-md w-full text-center border border-gray-200">
+          <div className="w-20 h-20 bg-pink-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <MonitorX className="w-10 h-10 text-pink-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4 font-ananda">
+            Desktop Experience Required
+          </h2>
+          <p className="text-gray-600 leading-relaxed">
+            Krafity.ai is designed for larger screens to give you the best creative experience. Please switch to a tablet, laptop, or desktop computer to continue.
+          </p>
         </div>
-      )}
-    </div>
+      </div>
+    );
+  }
+
+  return (
+    <FrameGraphProvider editor={editor}>
+      <div style={{ position: "fixed", inset: 0 }}>
+        <Tldraw
+          onMount={handleEditorMount}
+          shapeUtils={customShapeUtils}
+          persistenceKey="hack-western-canvas-v3"
+          hideUi={hideUi}
+          components={{
+            OnTheCanvas: () => (
+              <>
+                <ArrowActionMenu />
+              </>
+            ),
+            InFrontOfTheCanvas: () => (
+              <>
+                <VideoGenerationManager />
+                <FrameGraphInitializer />
+              </>
+            ),
+            QuickActions: () => (
+              <DefaultQuickActions>
+                <GitHubButton />
+                <DefaultQuickActionsContent />
+              </DefaultQuickActions>
+            ),
+          }}
+        ></Tldraw>
+        <CanvasToolbar onClear={handleClear} editorRef={editorRef} />
+        <CanvasNavigationMenu setHideUi={setHideUi} />
+      </div>
+    </FrameGraphProvider>
   );
 }

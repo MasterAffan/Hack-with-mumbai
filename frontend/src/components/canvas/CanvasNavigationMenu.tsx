@@ -1,0 +1,105 @@
+import React, { useState } from "react";
+import {
+  Menu,
+  Home,
+  LayoutDashboard,
+  LogIn,
+  BookOpen,
+  LogOut,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { TutorialSlideshow } from "./KrafityTutorial";
+import { useAuth } from "../../contexts/AuthContext";
+
+export const CanvasNavigationMenu: React.FC<{
+  setHideUi: (v: boolean) => void;
+}> = ({ setHideUi }) => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const navigate = useNavigate();
+  const { user, signOut } = useAuth();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
+  };
+
+  const menuItems = [
+    {
+      label: "Home",
+      icon: Home,
+      onClick: () => {
+        navigate("/");
+        setIsMenuOpen(false);
+      },
+    },
+    {
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      onClick: () => {
+        navigate("/dashboard");
+        setIsMenuOpen(false);
+      },
+    },
+    {
+      label: "Tutorial",
+      icon: BookOpen,
+      onClick: () => {
+        setHideUi(true);
+        setIsMenuOpen(false);
+        setTimeout(() => setIsTutorialOpen(true), 200);
+      },
+    },
+    {
+      label: user ? "Logout" : "Login",
+      icon: user ? LogOut : LogIn,
+      onClick: user ? handleLogout : () => navigate("/login"),
+    },
+  ];
+
+  return (
+    <>
+      <TutorialSlideshow
+        isOpen={isTutorialOpen}
+        onClose={() => {
+          setIsTutorialOpen(false);
+          setHideUi(false);
+        }}
+      />
+
+      <button
+        onClick={() => setIsMenuOpen(!isMenuOpen)}
+        className="fixed bottom-6 left-6 z-50 p-4 bg-white/40 backdrop-blur-xl border border-white/60 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.08)] hover:bg-white/50 transition-all duration-200 cursor-pointer group"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="w-6 h-6 text-gray-700 group-hover:text-pink-500 transition-colors" />
+      </button>
+
+      {isMenuOpen && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
+            onClick={() => setIsMenuOpen(false)}
+          />
+          <div className="fixed z-50 bottom-24 left-6 w-64 bg-white/95 backdrop-blur-md border border-pink-200/50 rounded-2xl p-4 shadow-2xl">
+            <div className="flex flex-col gap-2">
+              {menuItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    onClick={item.onClick}
+                    className="flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:text-pink-600 hover:bg-pink-50 rounded-xl transition-all duration-200 cursor-pointer group"
+                  >
+                    <Icon className="w-5 h-5 text-gray-500 group-hover:text-pink-500 transition-colors" />
+                    <span className="font-medium">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+};

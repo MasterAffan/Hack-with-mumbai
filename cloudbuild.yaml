@@ -1,0 +1,47 @@
+steps:
+  # Pull previous image for layer caching
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'docker pull gcr.io/${PROJECT_ID}/krafity-backend:latest || exit 0'
+  
+  # Build with cache
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '--cache-from', 'gcr.io/${PROJECT_ID}/krafity-backend:latest',
+      '-t', 'gcr.io/${PROJECT_ID}/krafity-backend:latest',
+      '.'
+    ]
+  
+  # Push image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${PROJECT_ID}/krafity-backend:latest']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'krafity-backend'
+      - '--image=gcr.io/${PROJECT_ID}/krafity-backend:latest'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--min-instances=0'
+      - '--max-instances=5'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--timeout=600'
+      - '--concurrency=40'
+      - '--no-cpu-throttling'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_BUCKET_NAME=krafityai-videos,FRONTEND_URL=https://krafity.pages.dev'
+
+images:
+  - 'gcr.io/${PROJECT_ID}/krafity-backend:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
