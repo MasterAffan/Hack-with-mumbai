@@ -2,27 +2,16 @@ import React, { useState } from "react";
 import {
   Menu,
   Home,
-  LayoutDashboard,
-  LogIn,
   BookOpen,
-  LogOut,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { TutorialSlideshow } from "./KrafityTutorial";
-import { useAuth } from "../../contexts/AuthContext";
-
 export const CanvasNavigationMenu: React.FC<{
   setHideUi: (v: boolean) => void;
 }> = ({ setHideUi }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-
-  const handleLogout = async () => {
-    await signOut();
-    navigate("/");
-  };
 
   const menuItems = [
     {
@@ -34,14 +23,6 @@ export const CanvasNavigationMenu: React.FC<{
       },
     },
     {
-      label: "Dashboard",
-      icon: LayoutDashboard,
-      onClick: () => {
-        navigate("/dashboard");
-        setIsMenuOpen(false);
-      },
-    },
-    {
       label: "Tutorial",
       icon: BookOpen,
       onClick: () => {
@@ -49,11 +30,6 @@ export const CanvasNavigationMenu: React.FC<{
         setIsMenuOpen(false);
         setTimeout(() => setIsTutorialOpen(true), 200);
       },
-    },
-    {
-      label: user ? "Logout" : "Login",
-      icon: user ? LogOut : LogIn,
-      onClick: user ? handleLogout : () => navigate("/login"),
     },
   ];
 

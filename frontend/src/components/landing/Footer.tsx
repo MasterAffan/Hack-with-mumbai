@@ -5,7 +5,7 @@ const Footer: React.FC = () => {
   return (
     <footer className="bg-gray-50 border-t border-gray-200 py-8">
       <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
-        <p className="text-gray-500 text-xs">© 2025 Krafity.ai ❤️</p>
+        <p className="text-gray-500 text-xs">© 2026 Krafity.ai ❤️</p>
         <a
           href="https://github.com/MasterAffan/Hack-with-mumbai"
           target="_blank"

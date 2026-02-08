@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Button, Flex, Tooltip, Spinner } from "@radix-ui/themes";
-import { Eraser, Video, TestTube2 } from "lucide-react";
+import { Eraser, Video } from "lucide-react";
 import { Editor, createShapeId, AssetRecordType, TLImageAsset } from "tldraw";
 import { toast } from "sonner";
 import { useFrameGraphContext } from "../../contexts/FrameGraphContext";
@@ -38,45 +38,68 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       .find((shape) => shape?.type === "aspect-frame");
 
     if (!selectedFrame) {
-      toast.error("Please select a frame to merge videos from.");
+      toast.error("Please select any frame in the chain to merge all its videos.");
       return;
     }
 
-    // Get the path from root to the selected frame (reverse traversal)
+    // Walk up to find the root of this frame's chain
     const path = frameGraph.getFramePath(selectedFrame.id);
-
     if (path.length === 0) {
-      toast.error("No path found for the selected frame.");
+      toast.error("No chain found for the selected frame.");
       return;
     }
+    const rootNode = path[0];
 
-    // Collect video URLs from arrows in the path
-    // The path is ordered from root to selected frame, so videoUrls will be in correct order
+    // DFS traverse the entire chain from root, collecting all video URLs in order
     const videoUrls: string[] = [];
+    const collectVideos = (frameId: typeof rootNode.frameId) => {
+      const node = frameGraph.getFramePath(frameId).pop(); // get node itself
+      if (!node) return;
 
-    // Traverse the path (skip the root frame, start from the first child)
-    for (let i = 1; i < path.length; i++) {
-      const node = path[i];
+      // Get all children of this node via descendants check
+      const graphData = frameGraph.getGraph();
+      const nodeData = graphData[frameId as string];
+      if (!nodeData) return;
 
-      // Get the arrow for this node
-      if (node.arrowId) {
-        const arrow = editor.getShape(node.arrowId);
-        if (arrow && arrow.type === "arrow") {
-          const videoUrl = arrow.meta?.videoUrl as string | undefined;
-          if (videoUrl && arrow.meta?.status === "done") {
-            videoUrls.push(videoUrl);
+      const children: { index: number; frameId: string }[] = nodeData.children || [];
+      // Sort children by branch index to maintain order
+      const sorted = [...children].sort((a, b) => a.index - b.index);
+
+      for (const child of sorted) {
+        // Get the arrow connecting parent to this child
+        const allShapes = editor.getCurrentPageShapes();
+        const childFrame = allShapes.find((s) => s.id === child.frameId);
+        if (!childFrame) continue;
+
+        // Find the arrow that connects to this child
+        const bindings = editor.getBindingsInvolvingShape(child.frameId as any);
+        const incomingBinding = bindings.find(
+          (b: any) => b.props.terminal === "end" && b.toId === child.frameId,
+        );
+        if (incomingBinding) {
+          const arrow = editor.getShape(incomingBinding.fromId);
+          if (arrow && arrow.type === "arrow") {
+            const videoUrl = arrow.meta?.videoUrl as string | undefined;
+            if (videoUrl && arrow.meta?.status === "done") {
+              videoUrls.push(videoUrl);
+            }
           }
         }
+
+        // Recurse into this child's children
+        collectVideos(child.frameId as any);
       }
-    }
+    };
+
+    collectVideos(rootNode.frameId);
 
     if (videoUrls.length === 0) {
-      toast.error("No videos found in the path from root to selected frame.");
+      toast.error("No completed videos found in this chain. Generate videos first.");
       return;
     }
 
     if (videoUrls.length < 2) {
-      toast.error("At least 2 videos are required for merging.");
+      toast.error("Need at least 2 completed videos in the chain to merge.");
       return;
     }
 
@@ -222,7 +245,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       // Reconstruct frame graph
       frameGraph.reconstructGraph();
 
-      toast.success(`Merged ${videoUrls.length} videos! Click the play button on the arrow to preview, or right-click the frame to download.`);
+      toast.success(`Merged all ${videoUrls.length} videos from the chain! Click the play button on the arrow to preview.`);
     } catch (error) {
       console.error("Error merging videos:", error);
       toast.error(
@@ -258,120 +281,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           </Button>
         </Tooltip>
 
-        <Tooltip content="Seed 3 Demo Video Frames (Testing)">
-          <Button
-            variant="surface"
-            color="violet"
-            onClick={() => {
-              if (!editorRef.current) {
-                toast.error("Editor not ready.");
-                return;
-              }
-              const ed = editorRef.current;
-              const pageId = ed.getCurrentPageId();
-              const FRAME_W = 960;
-              const FRAME_H = 540;
-              const GAP = 2000;
-              const demoVideoUrl = `${window.location.origin}/demo/demo-1080p.mp4`;
-
-              const frame1Id = createShapeId();
-              const frame2Id = createShapeId();
-              const frame3Id = createShapeId();
-              const arrow1Id = createShapeId();
-              const arrow2Id = createShapeId();
-
-              const startX = 100;
-              const startY = 300;
-
-              // Create 3 frames in a line
-              ed.createShapes([
-                {
-                  id: frame1Id,
-                  type: "aspect-frame",
-                  x: startX,
-                  y: startY,
-                  parentId: pageId,
-                  props: { w: FRAME_W, h: FRAME_H, name: "Demo Frame 1" },
-                },
-                {
-                  id: frame2Id,
-                  type: "aspect-frame",
-                  x: startX + FRAME_W + GAP,
-                  y: startY,
-                  parentId: pageId,
-                  props: { w: FRAME_W, h: FRAME_H, name: "Demo Frame 2" },
-                },
-                {
-                  id: frame3Id,
-                  type: "aspect-frame",
-                  x: startX + 2 * (FRAME_W + GAP),
-                  y: startY,
-                  parentId: pageId,
-                  props: { w: FRAME_W, h: FRAME_H, name: "Demo Frame 3" },
-                },
-              ]);
-
-              // Create arrows connecting frames
-              ed.createShapes([
-                {
-                  id: arrow1Id,
-                  type: "arrow",
-                  parentId: pageId,
-                  props: {
-                    start: { x: startX + FRAME_W, y: startY + FRAME_H / 2 },
-                    end: { x: startX + FRAME_W + GAP, y: startY + FRAME_H / 2 },
-                  },
-                },
-                {
-                  id: arrow2Id,
-                  type: "arrow",
-                  parentId: pageId,
-                  props: {
-                    start: { x: startX + FRAME_W + GAP + FRAME_W, y: startY + FRAME_H / 2 },
-                    end: { x: startX + 2 * (FRAME_W + GAP), y: startY + FRAME_H / 2 },
-                  },
-                },
-              ]);
-
-              // Bind arrows to frames
-              ed.createBinding({ type: "arrow", fromId: arrow1Id, toId: frame1Id, props: { terminal: "start", isPrecise: true } });
-              ed.createBinding({ type: "arrow", fromId: arrow1Id, toId: frame2Id, props: { terminal: "end", isPrecise: true } });
-              ed.createBinding({ type: "arrow", fromId: arrow2Id, toId: frame2Id, props: { terminal: "start", isPrecise: true } });
-              ed.createBinding({ type: "arrow", fromId: arrow2Id, toId: frame3Id, props: { terminal: "end", isPrecise: true } });
-
-              // Set arrow meta with demo video URL and status done
-              ed.updateShapes([
-                {
-                  id: arrow1Id,
-                  type: "arrow",
-                  meta: { jobId: "demo-1", status: "done", videoUrl: demoVideoUrl },
-                },
-                {
-                  id: arrow2Id,
-                  type: "arrow",
-                  meta: { jobId: "demo-2", status: "done", videoUrl: demoVideoUrl },
-                },
-              ]);
-
-              // Reconstruct frame graph to pick up new frames
-              frameGraph.reconstructGraph();
-
-              toast.success("3 demo frames seeded with demo-1080p.mp4 video URLs. Select Frame 3 and click Merge Videos.");
-            }}
-            style={{
-              cursor: "pointer",
-              background: "rgba(255, 255, 255, 0.4)",
-              backdropFilter: "blur(12px)",
-              border: "1px solid rgba(255, 255, 255, 0.6)",
-            }}
-            className="hover:bg-white/60 transition-all"
-          >
-            <TestTube2 size={16} />
-            Seed Demo
-          </Button>
-        </Tooltip>
-
-        <Tooltip content="Merge Videos from Selected Frame">
+        <Tooltip content="Merge All Videos in the Chain (select any frame)">
           <Button
             variant="surface"
             color="green"
